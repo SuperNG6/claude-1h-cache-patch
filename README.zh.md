@@ -39,6 +39,7 @@ function cX5(H) { return true }
 | Linux | native binary | systemd `.path` unit；不可用时降级为 autostart |
 | Windows | native binary | 任务计划程序 + 后台守护进程 |
 | 全平台 | npm `cli.js` | 补丁支持；无目录监听（npm 更新直接替换文件） |
+| 全平台 | VSCode 插件版 Claude Code | 补丁支持；无目录监听（扩展更新由编辑器管理） |
 
 补丁基于**语义锚点**（源码中的字符串字面量）定位目标函数，不依赖混淆后的函数名，只要 Anthropic 不重命名这些内部字符串，补丁在小版本更新后依然有效。
 
