@@ -36,6 +36,7 @@ This means every cache block Claude Code creates will carry `ttl: "1h"`, keeping
 | Linux | native binary | systemd `.path` unit; falls back to autostart |
 | Windows | native binary | Task Scheduler + background daemon |
 | All | npm `cli.js` | Patch supported; no directory watch (npm updates replace files in-place) |
+| All | VSCode extension Claude Code | Patch supported; no directory watch (extension updates are managed by the editor) |
 
 The patch uses **semantic anchors** (string literals in the source) rather than obfuscated function names, so it survives minor version updates as long as Anthropic doesn't rename these internal strings.
 

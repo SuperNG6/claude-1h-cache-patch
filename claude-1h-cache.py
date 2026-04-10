@@ -42,6 +42,11 @@ def _make_replacement():
     return base + b' ' * (len(ORIG_FUNC) - len(base))
 
 REPLACEMENT = _make_replacement()
+MAX_SCAN_FILE_SIZE = 80 * 1024 * 1024
+MAX_SCAN_DEPTH = 6
+SCAN_SKIP_DIRS = {
+    ".git", ".hg", ".svn", "__pycache__", "tmp", "cache", "logs", "log", "extensions-cache"
+}
 
 # ─── 平台 ─────────────────────────────────────────────────────────────────────
 SYSTEM   = platform.system()   # Darwin / Linux / Windows
@@ -70,7 +75,7 @@ def section(msg): print(f"\n{bold(cyan(msg))}")
 def find_target():
     """
     返回 (path, mode, versions_dir_or_None)
-    mode: "binary" | "npm"
+    mode: "binary" | "npm" | "vscode"
     versions_dir: native binary 模式下的版本目录（用于监听）
     """
 
@@ -121,7 +126,124 @@ def find_target():
     if npm_candidates:
         return npm_candidates, "npm", None
 
+    # ── VSCode 插件版（扩展目录 / globalStorage）
+    vscode_target = _find_vscode_target()
+    if vscode_target:
+        return vscode_target, "vscode", None
+
     return None, None, None
+
+
+def _file_has_patch_anchor(path: str) -> bool:
+    try:
+        if os.path.getsize(path) > MAX_SCAN_FILE_SIZE:
+            return False
+        with open(path, "rb") as f:
+            data = f.read()
+        return ORIG_FUNC in data or PATCH_MARKER in data
+    except Exception:
+        return False
+
+
+def _scan_dir_for_patch_target(root: str):
+    if not os.path.isdir(root):
+        return None
+
+    # 常见位置优先
+    preferred = [
+        os.path.join(root, "cli.js"),
+        os.path.join(root, "dist", "cli.js"),
+        os.path.join(root, "out", "cli.js"),
+        os.path.join(root, "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+        os.path.join(root, "node_modules", "@anthropic-ai", "claude-code", "dist", "cli.js"),
+        os.path.join(root, "claude"),
+        os.path.join(root, "claude.exe"),
+    ]
+    for p in preferred:
+        if os.path.isfile(p) and _file_has_patch_anchor(p):
+            return p
+
+    root_depth = root.rstrip(os.sep).count(os.sep)
+    name_candidates = {"cli.js", "claude", "claude.exe"}
+    for cur, dirs, files in os.walk(root):
+        depth = cur.rstrip(os.sep).count(os.sep) - root_depth
+        if depth >= MAX_SCAN_DEPTH:
+            dirs[:] = []
+            continue
+        dirs[:] = [d for d in dirs if d not in SCAN_SKIP_DIRS]
+        cur_lower = cur.lower()
+        for fn in files:
+            fn_lower = fn.lower()
+            if fn_lower in name_candidates or _is_claude_related_js_file(fn_lower, cur_lower):
+                p = os.path.join(cur, fn)
+                if _file_has_patch_anchor(p):
+                    return p
+    return None
+
+
+def _is_claude_related_js_file(filename_lower: str, dirpath_lower: str) -> bool:
+    return filename_lower.endswith(".js") and ("claude" in dirpath_lower or "claude" in filename_lower)
+
+
+def _collect_vscode_roots():
+    roots = []
+    if IS_WIN:
+        user_profile = os.environ.get("USERPROFILE", HOME)
+        appdata = os.environ.get("APPDATA", "")
+        roots += [
+            os.path.join(user_profile, ".vscode", "extensions"),
+            os.path.join(user_profile, ".vscode-insiders", "extensions"),
+            os.path.join(user_profile, ".cursor", "extensions"),
+            os.path.join(appdata, "Code", "User", "globalStorage"),
+            os.path.join(appdata, "Code - Insiders", "User", "globalStorage"),
+            os.path.join(appdata, "Cursor", "User", "globalStorage"),
+            os.path.join(appdata, "VSCodium", "User", "globalStorage"),
+        ]
+    elif IS_MAC:
+        roots += [
+            os.path.join(HOME, ".vscode", "extensions"),
+            os.path.join(HOME, ".vscode-insiders", "extensions"),
+            os.path.join(HOME, ".cursor", "extensions"),
+            os.path.join(HOME, "Library", "Application Support", "Code", "User", "globalStorage"),
+            os.path.join(HOME, "Library", "Application Support", "Code - Insiders", "User", "globalStorage"),
+            os.path.join(HOME, "Library", "Application Support", "Cursor", "User", "globalStorage"),
+            os.path.join(HOME, "Library", "Application Support", "VSCodium", "User", "globalStorage"),
+        ]
+    else:
+        roots += [
+            os.path.join(HOME, ".vscode", "extensions"),
+            os.path.join(HOME, ".vscode-insiders", "extensions"),
+            os.path.join(HOME, ".cursor", "extensions"),
+            os.path.join(HOME, ".config", "Code", "User", "globalStorage"),
+            os.path.join(HOME, ".config", "Code - Insiders", "User", "globalStorage"),
+            os.path.join(HOME, ".config", "Cursor", "User", "globalStorage"),
+            os.path.join(HOME, ".config", "VSCodium", "User", "globalStorage"),
+        ]
+    # 去重并保留顺序
+    return list(dict.fromkeys(roots))
+
+
+def _find_vscode_target():
+    roots = _collect_vscode_roots()
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        # 先优先扫描含 claude 的子目录
+        try:
+            entries = sorted(os.listdir(root), reverse=True)
+        except Exception:
+            entries = []
+        for entry in entries:
+            if "claude" not in entry.lower():
+                continue
+            p = _scan_dir_for_patch_target(os.path.join(root, entry))
+            if p:
+                return p
+        # 再回退扫描根目录（兼容无 claude 命名的目录结构）
+        p = _scan_dir_for_patch_target(root)
+        if p:
+            return p
+    return None
 
 
 def _find_npm_cli():
@@ -534,7 +656,7 @@ def daemon_watch(versions_dir: str):
 # ─── 监听安装分发 ─────────────────────────────────────────────────────────────
 def do_watch_install(versions_dir: str) -> bool:
     if versions_dir is None:
-        warn("npm 安装模式不支持目录监听（npm 更新不会产生新文件）。")
+        warn("当前安装模式不支持目录监听（更新通常不会在 versions 目录产生新文件）。")
         info("建议更新后手动运行：python3 claude-1h-cache.py patch")
         return False
     if IS_MAC:
@@ -592,7 +714,7 @@ def main():
     section("[ 1 ] 定位 Claude Code 安装...")
     target, mode, versions_dir = find_target()
     if not target:
-        err("未找到 Claude Code。请确认已安装（native 或 npm）。")
+        err("未找到 Claude Code。请确认已安装（native、npm 或 VSCode 插件版）。")
         sys.exit(1)
     ok(f"安装类型：{bold(mode)}")
     ok(f"目标文件：{cyan(target)}")
