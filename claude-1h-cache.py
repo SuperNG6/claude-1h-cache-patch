@@ -44,6 +44,9 @@ def _make_replacement():
 REPLACEMENT = _make_replacement()
 MAX_SCAN_FILE_SIZE = 80 * 1024 * 1024
 MAX_SCAN_DEPTH = 6
+SCAN_SKIP_DIRS = {
+    ".git", ".hg", ".svn", "__pycache__", "tmp", "cache", "logs", "log", "extensions-cache"
+}
 
 # ─── 平台 ─────────────────────────────────────────────────────────────────────
 SYSTEM   = platform.system()   # Darwin / Linux / Windows
@@ -161,20 +164,17 @@ def _scan_dir_for_patch_target(root: str):
             return p
 
     root_depth = root.rstrip(os.sep).count(os.sep)
-    skip_dirs = {
-        ".git", ".hg", ".svn", "__pycache__", "tmp", "cache", "logs", "log", "extensions-cache"
-    }
     name_candidates = {"cli.js", "claude", "claude.exe"}
     for cur, dirs, files in os.walk(root):
         depth = cur.rstrip(os.sep).count(os.sep) - root_depth
         if depth >= MAX_SCAN_DEPTH:
             dirs[:] = []
             continue
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        dirs[:] = [d for d in dirs if d not in SCAN_SKIP_DIRS]
         cur_lower = cur.lower()
         for fn in files:
             fn_lower = fn.lower()
-            if fn_lower in name_candidates or (fn_lower.endswith(".js") and "claude" in (cur_lower + "/" + fn_lower)):
+            if fn_lower in name_candidates or (fn_lower.endswith(".js") and ("claude" in cur_lower or "claude" in fn_lower)):
                 p = os.path.join(cur, fn)
                 if _file_has_patch_anchor(p):
                     return p
