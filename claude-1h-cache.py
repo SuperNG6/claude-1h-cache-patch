@@ -42,6 +42,8 @@ def _make_replacement():
     return base + b' ' * (len(ORIG_FUNC) - len(base))
 
 REPLACEMENT = _make_replacement()
+MAX_SCAN_FILE_SIZE = 80 * 1024 * 1024
+MAX_SCAN_DEPTH = 6
 
 # ─── 平台 ─────────────────────────────────────────────────────────────────────
 SYSTEM   = platform.system()   # Darwin / Linux / Windows
@@ -131,7 +133,7 @@ def find_target():
 
 def _file_has_patch_anchor(path: str) -> bool:
     try:
-        if os.path.getsize(path) > 80 * 1024 * 1024:
+        if os.path.getsize(path) > MAX_SCAN_FILE_SIZE:
             return False
         with open(path, "rb") as f:
             data = f.read()
@@ -165,7 +167,7 @@ def _scan_dir_for_patch_target(root: str):
     name_candidates = {"cli.js", "claude", "claude.exe"}
     for cur, dirs, files in os.walk(root):
         depth = cur.rstrip(os.sep).count(os.sep) - root_depth
-        if depth >= 6:
+        if depth >= MAX_SCAN_DEPTH:
             dirs[:] = []
             continue
         dirs[:] = [d for d in dirs if d not in skip_dirs]
