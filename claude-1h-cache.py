@@ -174,11 +174,15 @@ def _scan_dir_for_patch_target(root: str):
         cur_lower = cur.lower()
         for fn in files:
             fn_lower = fn.lower()
-            if fn_lower in name_candidates or (fn_lower.endswith(".js") and ("claude" in cur_lower or "claude" in fn_lower)):
+            if fn_lower in name_candidates or _is_claude_related_js_file(fn_lower, cur_lower):
                 p = os.path.join(cur, fn)
                 if _file_has_patch_anchor(p):
                     return p
     return None
+
+
+def _is_claude_related_js_file(filename_lower: str, dirpath_lower: str) -> bool:
+    return filename_lower.endswith(".js") and ("claude" in dirpath_lower or "claude" in filename_lower)
 
 
 def _collect_vscode_roots():
